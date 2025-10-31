@@ -39,6 +39,25 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.8.0
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Publish engram-nodejs to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public
+
       - name: Package artifacts
         if: success()
         run: |
