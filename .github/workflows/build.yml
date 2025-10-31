@@ -1,0 +1,48 @@
+name: Build Engram Workspace
+
+on:
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  build:
+    name: Build Engram Core + VFS
+    runs-on: ubuntu-latest
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_GIT_FETCH_WITH_CLI: true # Ensures GitHub token is used for private deps
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout Engram Core repo
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build workspace
+        run: cargo build --workspace --release
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets
+
+      - name: Package artifacts
+        if: success()
+        run: |
+          mkdir -p artifacts
+          cp target/release/engram-core artifacts/ || true
+          cp target/release/engram-vfs artifacts/ || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: engram-artifacts
+          path: artifacts/
