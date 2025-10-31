@@ -1,0 +1,89 @@
+name: Manual Benchmark Regression Check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+      ENGRAM_CORE_TOKEN: ${{ secrets.ENGRAM_CORE_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Configure Git for private deps
+        run: |
+          git config --global url."https://${ENGRAM_CORE_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.8.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build native module
+        run: pnpm run build
+
+      - name: Run benchmarks
+        run: pnpm run bench
+
+      - name: Capture BENCHMARK.md diff
+        run: git diff HEAD -- BENCHMARK.md > bench.diff
+
+      - name: Post benchmark delta
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('bench.diff', 'utf8').trim();
+            if (!diff) {
+              core.info('No BENCHMARK.md changes detected.');
+              await core.summary
+                .addHeading('Benchmark delta')
+                .addRaw('No BENCHMARK.md changes detected.', true)
+                .write();
+              return;
+            }
+
+            const body = [
+              '### Benchmark delta',
+              '',
+              '```diff',
+              diff,
+              '```',
+            ].join('\n');
+
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body,
+            });
+
+            await core.summary
+              .addHeading('Benchmark delta')
+              .addCodeBlock(diff, 'diff')
+              .write();

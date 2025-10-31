@@ -46,9 +46,11 @@ pnpm run build
 ```
 
 ## Benchmarks
-- Review the latest numbers in `BENCHMARK.md` (history is preserved via Git commits).
-- Generate fresh measurements locally with `pnpm run bench`. The command rebuilds a synthetic archive, runs database and file-access scenarios, updates `BENCHMARK.md`, and should be committed alongside your changes.
-- GitHub Actions re-runs the benchmark suite on `main` and for pull requests, publishing the generated report as a workflow artifact for reproducible comparisons.
+- `BENCHMARK.md` now opens with system metadata (CPU, memory, disk, commits) and a side-by-side summary so non-specialists can see “small vs enterprise” performance at a glance.
+- `pnpm run bench` rebuilds both workloads (1.2k-doc small archive and 50k-doc enterprise archive) across cold and warm modes, normalises throughput per doc/query, and overwrites `BENCHMARK.md`.
+- Commit the refreshed `BENCHMARK.md` alongside code changes so the Git log remains the single source of truth for “it used to be faster” discussions.
+- GitHub Actions automatically runs the benchmark suite on `main`/PR pushes, and a manual “Manual Benchmark Regression Check” workflow reruns the suite, diffs `BENCHMARK.md`, and posts the delta against the latest commit.
+- Snapshot (2025-10-31): warm small-archive reads sustain ≈70 k docs/s with ≈0.9 ms SQL, while the warm enterprise archive still delivers ≈38 k docs/s and ≈200 queries/s after the initial cold-open cost.
 
 ## Publishing Checklist
 1. Update dependency declarations in `crates/*/Cargo.toml` to point at the released `engram-core`.

@@ -37,7 +37,15 @@ After building the native module you can run the end-to-end benchmark suite:
 pnpm run bench
 ```
 
-Each execution rewrites `BENCHMARK.md` with the latest timings so you can commit the results and track performance changes via Git history.
+Each execution rewrites `BENCHMARK.md` with the latest timings so you can commit the results and track performance changes via Git history. The harness captures both a baseline documentation workload and a heavier “enterprise” dataset (~160 MB, three SQLite databases, 50k entries) under three access modes:
+
+- Cold process & cold archive (worst case, fresh start)
+- Warm process & cold archive (engine preloaded, archive reopened)
+- Warm process & warm archive (long-lived handles)
+
+The generated report opens with system specs plus a “quick glance” table that normalises docs-per-second and queries-per-second, making it easy to compare runs without digging through raw timings.
+
+When sharing numbers, reference the specific commit hashes that the benchmark records at the top of `BENCHMARK.md`.
 
 ## Your First Archive
 
