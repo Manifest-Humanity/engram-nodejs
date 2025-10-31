@@ -1,0 +1,24 @@
+[package]
+name = "engram-napi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.napi]
+name = "engram-nodejs"
+
+[dependencies]
+engram-core = { path = "../../../engram-core/crates/engram-core" }
+engram-vfs = { path = "../../../engram-core/crates/engram-vfs" }
+napi.workspace = true
+napi-derive.workspace = true
+tokio.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+napi-build = "2"
