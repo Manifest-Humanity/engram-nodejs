@@ -29,6 +29,16 @@ cd engram-nodejs
 pnpm run build:local   # installs deps, loads .env, and builds the project
 ```
 
+## Benchmarking the runtime
+
+After building the native module you can run the end-to-end benchmark suite:
+
+```bash
+pnpm run bench
+```
+
+Each execution rewrites `BENCHMARK.md` with the latest timings so you can commit the results and track performance changes via Git history.
+
 ## Your First Archive
 
 Let's create a simple archive with some files and a database.

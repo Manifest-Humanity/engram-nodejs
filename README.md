@@ -45,6 +45,11 @@ pnpm install --frozen-lockfile
 pnpm run build
 ```
 
+## Benchmarks
+- Review the latest numbers in `BENCHMARK.md` (history is preserved via Git commits).
+- Generate fresh measurements locally with `pnpm run bench`. The command rebuilds a synthetic archive, runs database and file-access scenarios, updates `BENCHMARK.md`, and should be committed alongside your changes.
+- GitHub Actions re-runs the benchmark suite on `main` and for pull requests, publishing the generated report as a workflow artifact for reproducible comparisons.
+
 ## Publishing Checklist
 1. Update dependency declarations in `crates/*/Cargo.toml` to point at the released `engram-core`.
 2. Ensure `NPM_TOKEN` is configured locally (`.env`) and in CI (`secrets.NPM_TOKEN`).
