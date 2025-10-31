@@ -12,6 +12,7 @@ jobs:
       CARGO_TERM_COLOR: always
       CARGO_NET_GIT_FETCH_WITH_CLI: true # Ensures GitHub token is used for private deps
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ENGRAM_CORE_TOKEN: ${{ secrets.ENGRAM_CORE_TOKEN }}
 
     steps:
       - name: Checkout Engram Core repo
@@ -19,6 +20,10 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
+
+      - name: Configure Git for private deps
+        run: |
+          git config --global url."https://${ENGRAM_CORE_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
