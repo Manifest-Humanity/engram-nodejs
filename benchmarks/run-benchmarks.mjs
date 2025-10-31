@@ -4,16 +4,17 @@
  * Benchmark runner for engram-nodejs.
  *
  * Generates two workloads side-by-side:
- *  1. Baseline “small archive” representative of a help center.
- *  2. Stress “enterprise archive” with tens of thousands of entries.
+ *  1. Baseline "small archive" representative of a help center.
+ *  2. Stress "enterprise archive" with tens of thousands of entries.
  *
  * Each workload records:
  *  - Build/packaging timings
  *  - Three access modes (cold start, warm module, warm handles)
  *  - Throughput normalised per document and per SQL query
  *
- * Results are written to BENCHMARK.md. Historical comparisons are tracked
- * via Git history; this file is intentionally overwritten each run.
+ * CI runs publish results to BENCHMARK.md for historical tracking.
+ * Local runs emit LOCAL_BENCHMARK.md (git ignored) so you can inspect
+ * your machine stats without churning the repo.
  */
 
 import { execSync } from 'node:child_process';
@@ -29,8 +30,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'engram-bench-'));
-const benchOutputPath = path.join(repoRoot, 'BENCHMARK.md');
+const ciBenchmarkPath = path.join(repoRoot, 'BENCHMARK.md');
+const localBenchmarkPath = path.join(repoRoot, 'LOCAL_BENCHMARK.md');
+const chartRelativePath = 'docs/bench-throughput-overview.svg';
+const chartOutputPath = path.join(repoRoot, 'docs', 'bench-throughput-overview.svg');
 const cargoLockPath = path.join(repoRoot, 'Cargo.lock');
+const isCi = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
 
 const MB = 1024 * 1024;
 
@@ -111,7 +116,7 @@ function formatBytes(bytes) {
 
 function formatThroughput(bytes, ms) {
   const seconds = ms / 1000;
-  if (seconds === 0) return '∞ MB/s';
+  if (seconds === 0) return '0 MB/s';
   return `${(bytes / MB / seconds).toFixed(2)} MB/s`;
 }
 
@@ -181,7 +186,7 @@ function getDiskInfo() {
       }
     }
   } catch {
-    // ignore — fall through to unknown
+    // ignore - fall through to unknown
   }
   return { device: 'unknown', free: 0, total: 0 };
 }
@@ -369,6 +374,11 @@ async function measureAccessModes({ scenario, archivePath, docPaths, dbSpecs }) 
       ? metrics.read_doc_batch_ms / docBuffers.length
       : 0;
     const totalBytes = docBuffers.reduce((sum, buf) => sum + buf.byteLength, 0);
+    metrics.read_doc_batch_bytes = totalBytes;
+    metrics.read_doc_batch_mb_per_s =
+      metrics.read_doc_batch_ms > 0
+        ? (totalBytes / MB) / (metrics.read_doc_batch_ms / 1000)
+        : 0;
     metrics.read_doc_batch_throughput = formatThroughput(totalBytes, metrics.read_doc_batch_ms);
     metrics.docs_per_sec = calcOpsPerSecond(docBuffers.length, metrics.read_doc_batch_ms);
 
@@ -442,7 +452,315 @@ async function measureAccessModes({ scenario, archivePath, docPaths, dbSpecs }) 
   return modeResults;
 }
 
-function buildMarkdown({ metadata, scenarioResults }) {
+function writeThroughputChart({ scenarioResults, outputPath }) {
+  const dataPoints = scenarioResults.map((result) => {
+    const warm = result.modes.warm_process_warm_archive ?? {};
+    return {
+      label: result.scenario.label,
+      archiveMb: result.archiveSizeBytes / MB,
+      docsPerSec: Number(warm.docs_per_sec) || 0,
+      queriesPerSec: Number(warm.queries_per_sec) || 0,
+      batchMs: Number(warm.read_doc_batch_ms) || 0,
+      bandwidth: Number(warm.read_doc_batch_mb_per_s) || 0,
+    };
+  });
+
+  if (dataPoints.length === 0) {
+    const emptySvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="480" viewBox="0 0 960 480">
+  <rect x="0" y="0" width="960" height="480" fill="#ffffff"/>
+  <text x="480" y="248" text-anchor="middle" font-size="18" font-family="Segoe UI, Arial, sans-serif" fill="#555555">
+    No benchmark data available
+  </text>
+</svg>
+`;
+    writeFileSync(outputPath, emptySvg, 'utf8');
+    return;
+  }
+
+  const sortedData = [...dataPoints].sort((a, b) => a.archiveMb - b.archiveMb);
+
+  const metricsConfig = [
+    {
+      key: 'docsPerSec',
+      label: 'Docs per second (warm)',
+      color: '#2d7dd2',
+      formatter: (value) => formatNumber(value, 0, 'docs/s'),
+      tickFormatter: (value) => formatNumber(value, 0),
+      approxTickCount: 4,
+    },
+    {
+      key: 'queriesPerSec',
+      label: 'Queries per second (warm)',
+      color: '#4cb944',
+      formatter: (value) => formatNumber(value, 1, 'queries/s'),
+      tickFormatter: (value) => formatNumber(value, 0),
+      approxTickCount: 4,
+    },
+    {
+      key: 'batchMs',
+      label: 'JSON batch read (ms, warm)',
+      color: '#f38d2e',
+      formatter: (value) => formatMs(value),
+      tickFormatter: (value) => formatNumber(value, 1),
+      approxTickCount: 4,
+    },
+    {
+      key: 'bandwidth',
+      label: 'JSON bandwidth (MB/s, warm)',
+      color: '#8750a1',
+      formatter: (value) => formatNumber(value, 1, 'MB/s'),
+      tickFormatter: (value) => formatNumber(value, 0),
+      approxTickCount: 4,
+    },
+  ];
+
+  const width = 960;
+  const height = 640;
+  const margin = { top: 72, right: 72, bottom: 140, left: 128 };
+  const panelCount = metricsConfig.length;
+  const panelGap = 32;
+  const plotWidth = width - margin.left - margin.right;
+  const plotLeft = margin.left;
+  const plotRight = width - margin.right;
+  const xInnerPadding = Math.min(120, plotWidth * 0.1);
+  const xRangeStart = plotLeft + xInnerPadding;
+  const xRangeEnd = plotRight - xInnerPadding;
+  const plotInnerWidth = xRangeEnd - xRangeStart;
+  const panelHeight =
+    (height - margin.top - margin.bottom - panelGap * (panelCount - 1)) / panelCount;
+
+  const maxArchive = Math.max(...sortedData.map((point) => point.archiveMb), 0);
+
+  const buildTickData = (maxValue, approxTickCount = 4) => {
+    if (!Number.isFinite(maxValue) || maxValue <= 0) {
+      const ticks = [];
+      const step = 1 / Math.max(approxTickCount, 1);
+      for (let i = 0; i <= approxTickCount; i += 1) {
+        ticks.push(Number((i * step).toFixed(2)));
+      }
+      return { axisMax: 1, ticks };
+    }
+
+    const roughStep = maxValue / Math.max(approxTickCount, 1);
+    const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+    const residual = roughStep / magnitude;
+    let niceResidual;
+    if (residual >= 5) {
+      niceResidual = 5;
+    } else if (residual >= 2) {
+      niceResidual = 2;
+    } else {
+      niceResidual = 1;
+    }
+    const step = niceResidual * magnitude;
+    const axisMax = step * Math.ceil(maxValue / step);
+    const ticks = [];
+    for (let value = 0; value <= axisMax + step / 2; value += step) {
+      ticks.push(Number(value.toFixed(6)));
+    }
+    return { axisMax, ticks };
+  };
+
+  const xTickData = buildTickData(maxArchive, 4);
+  const xAxisMax = xTickData.axisMax || (maxArchive || 1);
+  const xTicks = xTickData.ticks;
+  const xScale = (value) =>
+    xRangeStart +
+    plotInnerWidth * (xAxisMax === 0 ? 0 : Math.min(Math.max(value, 0), xAxisMax) / xAxisMax);
+
+  const formatArchiveTick = (value) => {
+    if (value >= 10) return formatNumber(value, 0);
+    return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  };
+
+  const svgParts = [];
+  svgParts.push('<?xml version="1.0" encoding="UTF-8"?>');
+  svgParts.push(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+  );
+  svgParts.push('<rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>');
+  svgParts.push(
+    '<title>Warm throughput metrics across archive sizes</title>'
+  );
+  svgParts.push(
+    `<desc>Warm Engram benchmarks for varying archive sizes, tracking docs per second, queries per second, JSON batch latency, and JSON bandwidth.</desc>`
+  );
+
+  xTicks.forEach((tick) => {
+    const x = xScale(tick);
+    svgParts.push(
+      `<line x1="${x.toFixed(2)}" y1="${margin.top}" x2="${x.toFixed(
+        2
+      )}" y2="${height - margin.bottom}" stroke="#eef2f7" stroke-width="1"/>`
+    );
+  });
+
+  sortedData.forEach((point) => {
+    const x = xScale(point.archiveMb);
+    svgParts.push(
+      `<line x1="${x.toFixed(2)}" y1="${margin.top}" x2="${x.toFixed(
+        2
+      )}" y2="${height - margin.bottom}" stroke="#d7dee9" stroke-width="1" stroke-dasharray="4 4"/>`
+    );
+  });
+
+  metricsConfig.forEach((metric, index) => {
+    const values = sortedData.map((point) => Number(point[metric.key]) || 0);
+    const { axisMax, ticks } = buildTickData(Math.max(...values, 0), metric.approxTickCount);
+    const panelTop = margin.top + index * (panelHeight + panelGap);
+    const panelBottom = panelTop + panelHeight;
+    const panelColor = index % 2 === 0 ? '#f8fafc' : '#ffffff';
+
+    svgParts.push(
+      `<rect x="${xRangeStart.toFixed(2)}" y="${panelTop.toFixed(
+        2
+      )}" width="${plotInnerWidth.toFixed(2)}" height="${panelHeight.toFixed(2)}" fill="${panelColor}" />`
+    );
+    const panelLabelX = (xRangeStart + xRangeEnd) / 2;
+    const panelLabelY = panelTop - 12;
+    svgParts.push(
+      `<text x="${panelLabelX.toFixed(2)}" y="${panelLabelY.toFixed(
+        2
+      )}" text-anchor="middle" font-size="12" font-weight="600" font-family="Segoe UI, Arial, sans-serif" fill="#1f2937">${metric.label}</text>`
+    );
+
+    svgParts.push(
+      `<line x1="${xRangeStart.toFixed(2)}" y1="${panelTop.toFixed(
+        2
+      )}" x2="${xRangeStart.toFixed(2)}" y2="${panelBottom.toFixed(
+        2
+      )}" stroke="#cbd5e1" stroke-width="1.5"/>`
+    );
+
+    ticks.forEach((tick) => {
+      const ratio = axisMax === 0 ? 0 : tick / axisMax;
+      const y = panelBottom - ratio * panelHeight;
+      svgParts.push(
+        `<line x1="${xRangeStart.toFixed(2)}" y1="${y.toFixed(
+          2
+        )}" x2="${xRangeEnd.toFixed(2)}" y2="${y.toFixed(
+          2
+        )}" stroke="#e2e8f0" stroke-width="1"/>`
+      );
+      svgParts.push(
+        `<text x="${(xRangeStart - 18).toFixed(2)}" y="${(y + 4).toFixed(
+          2
+        )}" text-anchor="end" font-size="11" font-family="Segoe UI, Arial, sans-serif" fill="#475569">${metric.tickFormatter(
+          tick
+        )}</text>`
+      );
+    });
+
+    const axisSafeMax = axisMax || 1;
+    const polyPoints = sortedData
+      .map((point) => {
+        const value = Number(point[metric.key]) || 0;
+        const ratio = axisSafeMax === 0 ? 0 : value / axisSafeMax;
+        const x = xScale(point.archiveMb);
+        const y = panelBottom - ratio * panelHeight;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .join(' ');
+
+    svgParts.push(
+      `<polyline points="${polyPoints}" fill="none" stroke="${metric.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`
+    );
+
+    sortedData.forEach((point, pointIndex) => {
+      const value = Number(point[metric.key]) || 0;
+      const ratio = axisSafeMax === 0 ? 0 : value / axisSafeMax;
+      const cx = xScale(point.archiveMb);
+      const cy = panelBottom - ratio * panelHeight;
+      svgParts.push(
+        `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(
+          2
+        )}" r="5" fill="${metric.color}" stroke="#ffffff" stroke-width="2"/>`
+      );
+
+      const annotation = metric.formatter(value);
+      let textY = cy - 10;
+      if (textY < panelTop + 16) {
+        textY = cy + 16;
+      }
+      svgParts.push(
+        `<text x="${cx.toFixed(2)}" y="${textY.toFixed(
+          2
+        )}" text-anchor="middle" font-size="11" font-family="Segoe UI, Arial, sans-serif" fill="#1f2937">${annotation}</text>`
+      );
+
+      if (index === 0) {
+        const labelY = cy - 30;
+        const scenarioLabelY = labelY < panelTop + 12 ? panelTop + 12 : labelY;
+        svgParts.push(
+          `<text x="${cx.toFixed(2)}" y="${scenarioLabelY.toFixed(
+            2
+          )}" text-anchor="middle" font-size="11" font-family="Segoe UI, Arial, sans-serif" fill="#6b7280">${point.label}</text>`
+        );
+      }
+    });
+  });
+
+  const axisY = height - margin.bottom;
+  svgParts.push(
+    `<line x1="${xRangeStart.toFixed(2)}" y1="${axisY.toFixed(
+      2
+    )}" x2="${xRangeEnd.toFixed(2)}" y2="${axisY.toFixed(
+      2
+    )}" stroke="#94a3b8" stroke-width="1.5"/>`
+  );
+
+  xTicks.forEach((tick) => {
+    const x = xScale(tick);
+    svgParts.push(
+      `<text x="${x.toFixed(2)}" y="${(axisY + 20).toFixed(
+        2
+      )}" text-anchor="middle" font-size="11" font-family="Segoe UI, Arial, sans-serif" fill="#475569">${formatArchiveTick(
+        tick
+      )}</text>`
+    );
+  });
+
+  sortedData.forEach((point) => {
+    const x = xScale(point.archiveMb);
+    svgParts.push(
+      `<text x="${x.toFixed(2)}" y="${(height - margin.bottom + 44).toFixed(
+        2
+      )}" text-anchor="middle" font-size="12" font-family="Segoe UI, Arial, sans-serif" fill="#1f2937">${point.label}</text>`
+    );
+    svgParts.push(
+      `<text x="${x.toFixed(2)}" y="${(height - margin.bottom + 60).toFixed(
+        2
+      )}" text-anchor="middle" font-size="11" font-family="Segoe UI, Arial, sans-serif" fill="#64748b">${formatNumber(
+        point.archiveMb,
+        2,
+        'MB'
+      )}</text>`
+    );
+  });
+
+  svgParts.push(
+    `<text x="${((xRangeStart + xRangeEnd) / 2).toFixed(
+      2
+    )}" y="${(height - margin.bottom + 80).toFixed(
+      2
+    )}" text-anchor="middle" font-size="13" font-family="Segoe UI, Arial, sans-serif" fill="#1f2937">Archive size (MB)</text>`
+  );
+
+  svgParts.push(
+    `<text x="${((xRangeStart + xRangeEnd) / 2).toFixed(
+      2
+    )}" y="${(margin.top - 24).toFixed(
+      2
+    )}" text-anchor="middle" font-size="18" font-family="Segoe UI, Arial, sans-serif" fill="#111827">Warm throughput metrics vs archive size</text>`
+  );
+
+  svgParts.push('</svg>');
+
+  writeFileSync(outputPath, `${svgParts.join('\n')}\n`, 'utf8');
+}
+
+function buildMarkdown({ metadata, scenarioResults, outputFileName, chartPath }) {
   const now = new Date();
   const summaryRows = scenarioResults
     .map((result) => {
@@ -459,6 +777,26 @@ function buildMarkdown({ metadata, scenarioResults }) {
     })
     .join('\n');
 
+  const retentionNotice =
+    outputFileName === 'BENCHMARK.md'
+      ? 'These measurements keep Engram performance honest. CI runs overwrite this file - use Git history for long-term trends.'
+      : 'These measurements keep Engram performance honest. This local snapshot is git ignored so you can iterate without repo churn.';
+
+  const warmMetricsBullets = scenarioResults.length
+    ? scenarioResults
+        .map((result) => {
+          const warm = result.modes.warm_process_warm_archive;
+          return `- ${result.scenario.label}: ${formatNumber(
+            warm.docs_per_sec,
+            0,
+            'docs/s'
+          )}, ${formatNumber(warm.queries_per_sec, 1, 'queries/s')}, ${formatMs(
+            warm.read_doc_batch_ms
+          )} JSON batch, ${formatNumber(warm.read_doc_batch_mb_per_s, 1, 'MB/s')} throughput`;
+        })
+        .join('\n')
+    : '*No warm metrics recorded.*';
+
   const header = `# Benchmark Results
 
 _Last updated: ${now.toISOString()}_
@@ -472,12 +810,17 @@ _Last updated: ${now.toISOString()}_
 - Disk: ${metadata.system.disk}
 - OS: ${metadata.system.os}
 
-These measurements keep Engram performance honest. Every run overwrites this file — use Git history for long-term trends.
+${retentionNotice}
 
 ## Quick glance
 | Scenario | Archive size | Build time | Cold batch read | Warm batch read | Warm doc throughput | Warm query throughput |
 | --- | --- | --- | --- | --- | --- | --- |
 ${summaryRows}
+
+### Warm throughput overview
+![Warm throughput metrics vs archive size](${chartPath})
+
+${warmMetricsBullets}
 
 Warm runs keep the archive and SQLite handles in memory, eliminating cold-start overhead.
 
@@ -488,7 +831,7 @@ Warm runs keep the archive and SQLite handles in memory, eliminating cold-start 
       result;
 
     const datasetLines = [
-      `- Articles packaged: ${formatCount(scenario.docCount)} (≈${formatBytes(
+      `- Articles packaged: ${formatCount(scenario.docCount)} (~${formatBytes(
         scenario.docBodyBytes
       )} per article body)`,
       `- JSON batch size used for read tests: ${formatCount(scenario.jsonBatchSize)}`,
@@ -519,7 +862,7 @@ Warm runs keep the archive and SQLite handles in memory, eliminating cold-start 
     const buildNotes =
       scenario.id === 'baseline'
         ? 'Packing the small dataset completes in well under a quarter second.'
-        : 'Packing the large dataset takes around two seconds because of the extra databases and 160 MB payload.';
+        : 'Packing the large dataset takes around two seconds because of the extra databases and 160 MB payload.';
 
     const modeTable = (metrics) => `| Step | Result | Plain language |
 | --- | --- | --- |
@@ -564,12 +907,28 @@ ${modeTable(modes.warm_process_warm_archive)}
 `;
   });
 
-  const footer = `## Reproducing locally
-1. Build the native module (\`pnpm run build\` or \`pnpm run build:local\`).
-2. Run \`pnpm run bench\` (overwrites this file).
-3. Commit the refreshed \`BENCHMARK.md\` so Git continues to track performance history.
+  const reproductionSteps =
+    outputFileName === 'BENCHMARK.md'
+      ? [
+          'Build the native module (`pnpm run build` or `pnpm run build:local`).',
+          'Run `pnpm run bench` locally to refresh `LOCAL_BENCHMARK.md` with your machine stats (git ignored).',
+          'Use Git history for `BENCHMARK.md` (updated by CI) before claiming regressions or improvements.',
+        ]
+      : [
+          'Build the native module (`pnpm run build` or `pnpm run build:local`).',
+          'Run `pnpm run bench` again whenever you need to refresh this local snapshot.',
+          'Compare with the committed `BENCHMARK.md` (published by CI) before claiming regressions.',
+        ];
 
-> Benchmark history is intentionally maintained via Git commits. Compare revisions of \`BENCHMARK.md\` before claiming regressions or improvements.
+  const reproductionNote =
+    outputFileName === 'BENCHMARK.md'
+      ? 'Local runs intentionally leave `BENCHMARK.md` untouched. Commit updates generated by CI.'
+      : '`LOCAL_BENCHMARK.md` is git ignored so you can iterate freely. CI owns the canonical `BENCHMARK.md`.';
+
+  const footer = `## Reproducing locally
+${reproductionSteps.map((step, idx) => `${idx + 1}. ${step}`).join('\n')}
+
+> ${reproductionNote}
 `;
 
   return `${header}
@@ -601,6 +960,11 @@ async function main() {
     scenarioResults.push(await runScenario(scenario));
   }
 
+  writeThroughputChart({ scenarioResults, outputPath: chartOutputPath });
+
+  const benchmarkOutputPath = isCi ? ciBenchmarkPath : localBenchmarkPath;
+  const outputFileName = path.basename(benchmarkOutputPath);
+
   const markdown = buildMarkdown({
     metadata: {
       crateCommit,
@@ -609,11 +973,15 @@ async function main() {
       system: systemInfo,
     },
     scenarioResults,
+    outputFileName,
+    chartPath: chartRelativePath,
   });
 
-  writeFileSync(benchOutputPath, markdown, 'utf8');
+  writeFileSync(benchmarkOutputPath, markdown, 'utf8');
 
-  console.log('Benchmark suite complete.');
+  console.log(
+    `Benchmark suite complete. Updated ${outputFileName} and ${chartRelativePath}.`
+  );
   const consoleSummary = scenarioResults.map((result) => {
     const warm = result.modes.warm_process_warm_archive;
     return {
@@ -629,21 +997,25 @@ async function main() {
   console.table(consoleSummary);
 }
 
-main()
-  .catch((err) => {
-    console.error('Benchmark failed:', err);
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    try {
-      rmSync(tmpRoot, { recursive: true, force: true });
-    } catch (cleanupError) {
-      if (
-        cleanupError?.code !== 'ENOENT' &&
-        cleanupError?.code !== 'EPERM' &&
-        cleanupError?.code !== 'ENOTEMPTY'
-      ) {
-        console.warn(`Warning: failed to remove ${tmpRoot}: ${cleanupError.message}`);
+export { writeThroughputChart };
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main()
+    .catch((err) => {
+      console.error('Benchmark failed:', err);
+      process.exitCode = 1;
+    })
+    .finally(() => {
+      try {
+        rmSync(tmpRoot, { recursive: true, force: true });
+      } catch (cleanupError) {
+        if (
+          cleanupError?.code !== 'ENOENT' &&
+          cleanupError?.code !== 'EPERM' &&
+          cleanupError?.code !== 'ENOTEMPTY'
+        ) {
+          console.warn(`Warning: failed to remove ${tmpRoot}: ${cleanupError.message}`);
+        }
       }
-    }
-  });
+    });
+}
