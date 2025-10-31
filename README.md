@@ -15,6 +15,7 @@
 - pnpm 8+
 - Rust toolchain with a stable compiler
 - Native build tooling for your platform (MSVC on Windows, Xcode CLT on macOS, GCC/Clang on Linux)
+- GitHub personal access token (PAT) with read access to [`Manifest-Humanity/engram-core`](https://github.com/Manifest-Humanity/engram-core), exported as `ENGRAM_CORE_TOKEN`
 
 The Rust crates reference the `engram-core` repo via a relative path (`../../engram-core/...`). When you publish this repository independently, replace those path dependencies with the appropriate git or registry references.
 
@@ -22,8 +23,8 @@ The Rust crates reference the `engram-core` repo via a relative path (`../../eng
 ```bash
 git clone https://github.com/yourusername/engram-nodejs.git
 cd engram-nodejs
-pnpm install
-pnpm run build
+cp .env.example .env    # populate ENGRAM_CORE_TOKEN (and optional NPM_TOKEN)
+pnpm run build:local    # installs deps and runs the full build
 ```
 
 ### Testing
@@ -37,11 +38,19 @@ pnpm run test:watch
 pnpm run example
 ```
 
+### Manual build invocation
+If you prefer to drive the steps yourself:
+```bash
+pnpm install --frozen-lockfile
+pnpm run build
+```
+
 ## Publishing Checklist
 1. Update dependency declarations in `crates/*/Cargo.toml` to point at the released `engram-core`.
-2. Run `pnpm run build` to generate/verify `lib/` artifacts.
-3. Run `pnpm test`.
-4. Tag and publish through your registry of choice.
+2. Ensure `NPM_TOKEN` is configured locally (`.env`) and in CI (`secrets.NPM_TOKEN`).
+3. Run `pnpm run build` to generate/verify `lib/` artifacts.
+4. Run `pnpm test`.
+5. Tag and publish through your registry of choice, or trigger the GitHub workflow.
 
 ## License
 MIT License – see `LICENSE`.

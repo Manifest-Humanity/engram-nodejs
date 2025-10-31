@@ -12,13 +12,21 @@ pnpm add engram-nodejs
 npm install engram-nodejs
 ```
 
+### Environment variables
+
+To build from source you need a GitHub Personal Access Token (classic, with `repo` read scope) that can access the private `Manifest-Humanity/engram-core` repository. Save it in `.env`:
+
+```bash
+cp .env.example .env
+echo "ENGRAM_CORE_TOKEN=ghp_your_token_here" >> .env
+```
+
 ### From source
 
 ```bash
 git clone https://github.com/yourusername/engram-nodejs.git
 cd engram-nodejs
-pnpm install
-pnpm run build
+pnpm run build:local   # installs deps, loads .env, and builds the project
 ```
 
 ## Your First Archive

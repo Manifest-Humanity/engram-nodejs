@@ -12,7 +12,8 @@
     "test": "pnpm run build:debug && vitest run",
     "test:watch": "vitest",
     "example": "pnpm run build:debug && ts-node examples/basic-usage.ts",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "build:local": "node ./scripts/build-local.mjs"
   },
   "napi": {
     "name": "engram-nodejs",
