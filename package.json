@@ -1,9 +1,13 @@
 {
   "name": "engram-nodejs",
   "version": "0.1.2",
-  "description": "Node.js bindings for the Engram archive core implementation",
+  "description": "High-level Node.js toolkit for reading and writing Engram (.eng) archives with prebuilt native binaries.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Manifest-Humanity/engram-nodejs.git"
+  },
   "main": "lib/index.js",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "types": "lib/index.d.ts",
   "scripts": {
     "build": "pnpm exec napi build --platform --release --cargo-cwd ./crates/engram-napi dist && pnpm run build:ts",

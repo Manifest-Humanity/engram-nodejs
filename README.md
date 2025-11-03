@@ -1,63 +1,105 @@
-# Engram Node.js Bindings
+# Engram for Node.js
 
-`engram-nodejs` packages the Rust native module (via NAPI-RS) together with a TypeScript API for working with Engram archives from Node.js or Electron. It depends on the Rust core implementation that now lives in the sibling [`engram-core`](../engram-core) repository.
+Engram ships a native Node.js addon plus a tidy TypeScript wrapper that lets you open `.eng` archives, stream files, and query the bundled SQLite databases without leaving JavaScript.
 
-## Layout
-- `crates/engram-napi`: Rust N-API module exposing the Engram API to JavaScript.
-- `crates/engram-ffi`: Optional C FFI layer reused by other bindings.
-- `src/`: TypeScript source for the public JavaScript API.
-- `lib/`: Pre-built JavaScript typings and CommonJS bundle produced by `pnpm run build`.
-- `examples/`: Usage samples (`pnpm run example`).
-- `tests/`: Vitest-based integration tests.
+You get prebuilt binaries for the common desktop/server platforms, type definitions for TypeScript, and a small ergonomic API for both reading and authoring Engram archives.
 
-## Prerequisites
-- Node.js 18+
-- pnpm 8+
-- Rust toolchain with a stable compiler
-- Native build tooling for your platform (MSVC on Windows, Xcode CLT on macOS, GCC/Clang on Linux)
-- GitHub personal access token (PAT) with read access to [`Manifest-Humanity/engram-core`](https://github.com/Manifest-Humanity/engram-core), exported as `ENGRAM_CORE_TOKEN`
+## What you can do
+- Mount an `.eng` archive and list, read, or batch fetch files.
+- Inspect archive metadata, manifest contents, and media assets.
+- Open the embedded SQLite database with zero-copy access.
+- Create or update archives by writing files, JSON, and databases.
+- Run the same code in Node.js, Electron, or serverless environments with Node 18+.
 
-The Rust crates reference the `engram-core` repo via a relative path (`../../engram-core/...`). When you publish this repository independently, replace those path dependencies with the appropriate git or registry references.
+## Installation
+Engram is published as a standard npm package with prebuilt native binaries.
 
-## Install & Build
 ```bash
-git clone https://github.com/yourusername/engram-nodejs.git
-cd engram-nodejs
-cp .env.example .env    # populate ENGRAM_CORE_TOKEN (and optional NPM_TOKEN)
-pnpm run build:local    # installs deps and runs the full build
+# npm
+npm install engram-nodejs
+
+# or pnpm
+pnpm add engram-nodejs
+
+# or yarn
+yarn add engram-nodejs
 ```
 
-### Testing
-```bash
-pnpm test          # One-off test run
-pnpm run test:watch
+Requirements:
+- Node.js 18 or newer (native fetch, worker threads, and napi ABI 8 support)
+- macOS (x64/arm64), Windows (x64), or Linux (x64 glibc). More targets are coming; open an issue if you need something different.
+
+No Rust toolchain or build dependencies are needed unless you choose to compile from source.
+
+## Quick start
+
+```ts
+import { EngramArchive } from 'engram-nodejs';
+
+const archive = new EngramArchive('path/to/my.archive.eng');
+
+console.log(`Entries: ${archive.entryCount}`);
+console.log(archive.listFiles().slice(0, 5));
+
+const manifest = await archive.readJson('manifest.json');
+console.log(`Project: ${manifest.name} v${manifest.version}`);
+
+const db = archive.openDatabase('data/catalog.sqlite');
+const topStories = db.query<{ id: string; title: string }>(
+  'select id, title from posts order by published_at desc limit 10'
+);
+console.log(topStories);
 ```
 
-### Running the example
-```bash
-pnpm run example
+## API highlights
+- **`EngramArchive`** – open an archive, list files, read binary/text/JSON content, access the manifest, or open SQLite databases.
+- **`EngramDatabase`** – run synchronous SQL queries (`query`, `queryOne`, `queryValue`, `execute`) against the embedded SQLite database.
+- **`EngramWriter`** – create a new archive, add files from buffers/disk, set compression, attach manifests, and finish with `finalize()`.
+- **`CompressionMethod`** – enumerate the compression algorithms supported when writing archives.
+
+Check `lib/index.d.ts` or run your editor’s “Go to Definition” for the full typed surface area.
+
+## Common recipes
+
+### Read a text asset
+```ts
+const doc = await archive.readText('docs/intro.md');
 ```
 
-### Manual build invocation
-If you prefer to drive the steps yourself:
-```bash
-pnpm install --frozen-lockfile
-pnpm run build
+### Stream multiple files at once
+```ts
+const [logo, hero] = await archive.readFiles([
+  'assets/logo.svg',
+  'assets/hero.png',
+]);
 ```
 
-## Benchmarks
-- `BENCHMARK.md` now opens with system metadata (CPU, memory, disk, commits) and a side-by-side summary so non-specialists can see “small vs enterprise” performance at a glance.
-- `pnpm run bench` rebuilds both workloads (1.2k-doc small archive and 50k-doc enterprise archive) across cold and warm modes, normalises throughput per doc/query, and overwrites `BENCHMARK.md`.
-- Commit the refreshed `BENCHMARK.md` alongside code changes so the Git log remains the single source of truth for “it used to be faster” discussions.
-- GitHub Actions automatically runs the benchmark suite on `main`/PR pushes, and a manual “Manual Benchmark Regression Check” workflow reruns the suite, diffs `BENCHMARK.md`, and posts the delta against the latest commit.
-- Snapshot (2025-10-31): warm small-archive reads sustain ≈70 k docs/s with ≈0.9 ms SQL, while the warm enterprise archive still delivers ≈38 k docs/s and ≈200 queries/s after the initial cold-open cost.
+### Build a new archive
+```ts
+import { EngramWriter, CompressionMethod } from 'engram-nodejs';
 
-## Publishing Checklist
-1. Update dependency declarations in `crates/*/Cargo.toml` to point at the released `engram-core`.
-2. Ensure `NPM_TOKEN` is configured locally (`.env`) and in CI (`secrets.NPM_TOKEN`).
-3. Run `pnpm run build` to generate/verify `lib/` artifacts.
-4. Run `pnpm test`.
-5. Tag and publish through your registry of choice, or trigger the GitHub workflow.
+const writer = new EngramWriter('dist/my.export.eng');
+writer.addManifest({ name: 'Sample', version: '1.0.0' });
+writer.addJson('data/stats.json', { total: 42 });
+writer.addFileWithCompression(
+  'assets/hero.png',
+  await fs.promises.readFile('public/hero.png'),
+  CompressionMethod.Brotli,
+);
+writer.finalize();
+```
+
+## Working with TypeScript and bundlers
+- Type definitions are bundled, so no extra `@types` package is needed.
+- The package exports CommonJS (`require`) by default; if you are using ESM, rely on Node’s `createRequire` or enable transpiler interop (for example `esModuleInterop` in TypeScript).
+- When shipping Electron apps, ensure the native binary ends up alongside your compiled JavaScript. Tools like `electron-builder` handle this automatically when you declare a dependency.
+
+## Troubleshooting
+- **“Cannot find module”** – ensure the install step completed; delete `node_modules` and reinstall if you upgraded Node versions.
+- **Native module load errors** – verify you are on Node 18+ and one of the listed platforms. For other environments (e.g., Alpine) file an issue so we can provide a tailored build.
+- **Archive path issues** – paths are resolved relative to the current working directory; pass absolute paths when embedding inside packaged apps.
+
+If you run into anything else, open an issue or start a discussion. We love seeing how you use Engram and are happy to help unblock you.
 
 ## License
-MIT License – see `LICENSE`.
+MIT – see `LICENSE` for the full text.
