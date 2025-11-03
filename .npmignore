@@ -12,11 +12,14 @@
 /node_modules/
 /coverage/
 /temp/
+/crates/
 
 # Repository-level docs and utilities not needed in the package
 BENCHMARK.md
 LOCAL_BENCHMARK.md
 test-simple.js
+Cargo.toml
+Cargo.lock
 
 # Environment and editor configuration
 .env
