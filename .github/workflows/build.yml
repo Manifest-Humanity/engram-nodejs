@@ -1,42 +1,58 @@
-name: Build Engram Workspace
+name: Publish Engram Node.js Bindings
 
 on:
   workflow_dispatch: # Manual trigger
 
-jobs:
-  build:
-    name: Build Engram Core + VFS
-    runs-on: ubuntu-latest
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ENGRAM_CORE_TOKEN: ${{ secrets.ENGRAM_CORE_TOKEN }}
 
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_NET_GIT_FETCH_WITH_CLI: true # Ensures GitHub token is used for private deps
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      ENGRAM_CORE_TOKEN: ${{ secrets.ENGRAM_CORE_TOKEN }}
+jobs:
+  build-native:
+    name: Build prebuilt addon (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
 
     steps:
-      - name: Checkout Engram Core repo
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 0
 
       - name: Configure Git for private deps
-        run: |
-          git config --global url."https://${ENGRAM_CORE_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+        shell: bash
+        run: git config --global url."https://${ENGRAM_CORE_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
-      - name: Build workspace
+      - name: Build Rust workspace
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: cargo build --workspace --release
 
-      - name: Run tests
+      - name: Run Rust tests
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: cargo test --workspace --all-targets
 
       - name: Set up Node.js
@@ -53,20 +69,91 @@ jobs:
       - name: Install Node dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Publish engram-nodejs to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --access public
+      - name: Build native addon
+        run: pnpm exec napi build --release --platform --cargo-cwd ./crates/engram-napi dist --target ${{ matrix.target }}
 
-      - name: Package artifacts
-        if: success()
+      - name: Compile TypeScript surface
+        run: pnpm run build:ts
+
+      - name: Collect dist outputs
+        shell: bash
         run: |
-          mkdir -p artifacts
-          cp target/release/engram-core artifacts/ || true
-          cp target/release/engram-vfs artifacts/ || true
+          mkdir -p artifacts/dist
+          cp dist/index.js artifacts/dist/
+          cp dist/index.d.ts artifacts/dist/
+          cp dist/*.node artifacts/dist/
 
-      - name: Upload build artifacts
+      - name: Upload dist artifact
         uses: actions/upload-artifact@v4
         with:
-          name: engram-artifacts
-          path: artifacts/
+          name: dist-${{ matrix.target }}
+          path: artifacts/dist
+
+  publish:
+    name: Publish npm package
+    needs: build-native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: npm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Configure Git for private deps
+        shell: bash
+        run: git config --global url."https://${ENGRAM_CORE_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.8.0
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript surface
+        run: pnpm run build:ts
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: prebuilds
+
+      - name: Assemble dist directory
+        shell: bash
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          first=true
+          shopt -s nullglob
+          for dir in prebuilds/dist-*; do
+            for node_file in "$dir"/*.node; do
+              cp "$node_file" dist/
+            done
+            if $first; then
+              cp "$dir"/index.js dist/
+              cp "$dir"/index.d.ts dist/
+              first=false
+            fi
+          done
+
+      - name: Verify package contents
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm_config_ignore_scripts: 'true'
+        run: npm publish --ignore-scripts --access public
