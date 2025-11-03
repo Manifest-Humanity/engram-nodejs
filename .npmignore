@@ -1,0 +1,38 @@
+# Exclude development and CI assets
+/.github/
+/benchmarks/
+/docs/
+/examples/
+/scripts/
+
+# Omit source, tests, and local build outputs
+/src/
+/tests/
+/target/
+/node_modules/
+/coverage/
+/temp/
+
+# Repository-level docs and utilities not needed in the package
+BENCHMARK.md
+LOCAL_BENCHMARK.md
+test-simple.js
+
+# Environment and editor configuration
+.env
+.env.*
+.vscode/
+.idea/
+
+# Tooling configuration that isn't required for consumers
+tsconfig.json
+tsconfig.test.json
+vitest.config.ts
+*.tsbuildinfo
+
+# Package manager artifacts and logs
+pnpm-lock.yaml
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
