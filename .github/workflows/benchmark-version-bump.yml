@@ -1,0 +1,112 @@
+name: Update Benchmark On Version Bump
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark:
+    if: "${{ !contains(github.event.head_commit.message || '', 'chore: update benchmark') }}"
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+      ENGRAM_CORE_TOKEN: ${{ secrets.ENGRAM_CORE_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Configure Git for private deps
+        run: |
+          git config --global url."https://${ENGRAM_CORE_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Detect version change
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_version=$(jq -r '.version' package.json)
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            previous_version=$(git show HEAD^:package.json | jq -r '.version')
+          else
+            previous_version=""
+          fi
+
+          echo "current=${current_version}" >> "$GITHUB_OUTPUT"
+          if [ "$current_version" != "$previous_version" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Set up Node.js
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up pnpm
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.8.0
+
+      - name: Install dependencies
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Build native module
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        run: pnpm run build
+
+      - name: Run benchmarks
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        run: pnpm run bench
+
+      - name: Check benchmark updates
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add BENCHMARK.md docs/bench-throughput-overview.svg
+          if git diff --cached --quiet; then
+            git reset -q
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit benchmark refresh
+        if: ${{ steps.diff.outputs.changed == 'true' }}
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.current }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BENCHMARK.md docs/bench-throughput-overview.svg
+          git commit -m "chore: update benchmark for ${VERSION}"
+
+      - name: Push benchmark commit
+        if: ${{ steps.diff.outputs.changed == 'true' }}
+        run: git push

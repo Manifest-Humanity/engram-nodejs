@@ -98,6 +98,12 @@ writer.finalize();
 - **“Cannot find module”** – ensure the install step completed; delete `node_modules` and reinstall if you upgraded Node versions.
 - **Native module load errors** – verify you are on Node 18+ and one of the listed platforms. For other environments (e.g., Alpine) file an issue so we can provide a tailored build.
 - **Archive path issues** – paths are resolved relative to the current working directory; pass absolute paths when embedding inside packaged apps.
+- **Workflow schema validation** – if CI complains about the benchmark workflow shape, convert it to JSON and validate against GitHub’s schema:
+  ```bash
+  curl -sSL https://www.schemastore.org/github-workflow.json -o /tmp/github-workflow.schema.json
+  npx js-yaml .github/workflows/benchmark-version-bump.yml > /tmp/benchmark-version-bump.json
+  npx ajv-cli validate -s /tmp/github-workflow.schema.json -d /tmp/benchmark-version-bump.json
+  ```
 
 If you run into anything else, open an issue or start a discussion. We love seeing how you use Engram and are happy to help unblock you.
 
