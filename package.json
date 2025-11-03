@@ -1,6 +1,6 @@
 {
   "name": "engram-nodejs",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "High-level Node.js toolkit for reading and writing Engram (.eng) archives with prebuilt native binaries.",
   "repository": {
     "type": "git",
