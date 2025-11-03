@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   benchmark:
-    if: "${{ !contains(github.event.head_commit.message || '', 'chore: update benchmark') }}"
+    if: >-
+      ${{ !github.event.head_commit.message ||
+          !contains(github.event.head_commit.message, 'chore: update benchmark') }}
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
@@ -81,13 +83,26 @@ jobs:
         if: ${{ steps.version.outputs.changed == 'true' }}
         run: pnpm run bench
 
+      - name: Generate changelog
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        run: npx auto-changelog --output CHANGELOG.md --commit-limit false --tag-prefix v --package
+
+      - name: Upload benchmark artifacts
+        if: ${{ steps.version.outputs.changed == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ steps.version.outputs.current }}
+          path: |
+            BENCHMARK.md
+            docs/bench-throughput-overview.svg
+
       - name: Check benchmark updates
         if: ${{ steps.version.outputs.changed == 'true' }}
         id: diff
         shell: bash
         run: |
           set -euo pipefail
-          git add BENCHMARK.md docs/bench-throughput-overview.svg
+          git add CHANGELOG.md BENCHMARK.md docs/bench-throughput-overview.svg
           if git diff --cached --quiet; then
             git reset -q
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -104,7 +119,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add BENCHMARK.md docs/bench-throughput-overview.svg
+          git add CHANGELOG.md BENCHMARK.md docs/bench-throughput-overview.svg
           git commit -m "chore: update benchmark for ${VERSION}"
 
       - name: Push benchmark commit

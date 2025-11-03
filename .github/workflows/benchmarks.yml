@@ -2,7 +2,7 @@ name: Benchmark Engram Node.js
 
 on:
   push:
-    branches:
+    branches-ignore:
       - main
   pull_request:
     branches:
@@ -55,8 +55,10 @@ jobs:
       - name: Run benchmarks
         run: pnpm run bench
 
-      - name: Upload benchmark report
+      - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-report
-          path: BENCHMARK.md
+          path: |
+            BENCHMARK.md
+            docs/bench-throughput-overview.svg
