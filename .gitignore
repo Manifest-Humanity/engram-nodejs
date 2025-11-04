@@ -14,3 +14,4 @@ yarn-error.log*
 .idea/
 temp/
 .env
+.claude/settings.local.json
