@@ -10,8 +10,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
-use engram_core::{ArchiveReader, CompressionMethod};
-use engram_vfs::EngramVfs;
+use engram_rs::{ArchiveReader, CompressionMethod, EngramVfs};
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -376,7 +375,6 @@ pub extern "C" fn engram_archive_get_metadata(
                 CompressionMethod::None => "none",
                 CompressionMethod::Lz4 => "lz4",
                 CompressionMethod::Zstd => "zstd",
-                CompressionMethod::Deflate => "deflate",
             },
             "modifiedTime": entry.modified_time,
             "crc32": entry.crc32,

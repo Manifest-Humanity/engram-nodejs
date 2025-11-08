@@ -9,8 +9,7 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-engram-core = { git = "https://github.com/Manifest-Humanity/engram-core", package = "engram-core" }
-engram-vfs  = { git = "https://github.com/Manifest-Humanity/engram-core", package = "engram-vfs" }
+engram-rs = { git = "https://github.com/Manifest-Humanity/engram-core", branch = "engram-rs-migration" }
 libc.workspace = true
 rusqlite = { workspace = true }
 serde = { workspace = true }

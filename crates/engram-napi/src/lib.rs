@@ -2,8 +2,7 @@
 //!
 //! NAPI-RS bindings for accessing .eng archives from Node.js/TypeScript
 
-use engram_core::{ArchiveReader, ArchiveWriter, CompressionMethod as CoreCompressionMethod};
-use engram_vfs::EngramVfs;
+use engram_rs::{ArchiveReader, ArchiveWriter, CompressionMethod as CoreCompressionMethod, EngramVfs};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use rusqlite::Connection;
@@ -15,7 +14,6 @@ pub enum CompressionMethod {
     None,
     Lz4,
     Zstd,
-    Deflate,
 }
 
 impl From<CompressionMethod> for CoreCompressionMethod {
@@ -24,7 +22,6 @@ impl From<CompressionMethod> for CoreCompressionMethod {
             CompressionMethod::None => CoreCompressionMethod::None,
             CompressionMethod::Lz4 => CoreCompressionMethod::Lz4,
             CompressionMethod::Zstd => CoreCompressionMethod::Zstd,
-            CompressionMethod::Deflate => CoreCompressionMethod::Deflate,
         }
     }
 }
